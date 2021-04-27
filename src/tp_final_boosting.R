@@ -209,21 +209,21 @@ TO_KEEP <- c("platform", "age", "install_date", "id",
              "categorical_4", "categorical_5", "categorical_6",
              "categorical_7", "device_model", "TutorialFinish",
              "country", "BuyCard_sum_dsi1", "BuyCard_sum_dsi2",
-             "BuyCard_sum_dsi3", "StartTournamentBattle_sum_dsi1",
-             "StartTournamentBattle_sum_dsi2", "StartTournamentBattle_sum_dsi3",
-             "JoinTournament_sum_dsi1", "JoinTournament_sum_dsi2",
-             "JoinTournament_sum_dsi3", "WinTournamentBattle_sum_dsi1",
-             "WinTournamentBattle_sum_dsi2", "WinTournamentBattle_sum_dsi3",
-             "LoseBattle_sum_dsi2", "LoseBattle_sum_dsi3")
+             "BuyCard_sum_dsi3", "LoseBattle_sum_dsi1", 
+             "LoseBattle_sum_dsi2", "LoseBattle_sum_dsi3",
+             "EnterShop_sum_dsi3", "OpenChest_sum_dsi3",
+             "UpgradeCard_sum_dsi3", "PiggyBankModifiedPoints_sum_dsi3",
+             "PiggyBankModifiedPoints_sum_dsi2", "hard_positive", "hard_negative",
+             "soft_positive", "soft_negative")
 
 ## Cargo uno de los datasets de entrenamiento del tp
 #train_set_1 <- load_csv_data("train_1.csv", sample_ratio = 0.1, sel_cols = TO_KEEP)
-#train_set_2 <- load_csv_data("train_2.csv", sample_ratio = 0.1, sel_cols = TO_KEEP)
-train_set_3 <- load_csv_data("train_3.csv", sample_ratio = 0.3, sel_cols = TO_KEEP)
-train_set_4 <- load_csv_data("train_4.csv", sample_ratio = 0.3, sel_cols = TO_KEEP)
-#train_set_5 <- load_csv_data("train_5.csv", sample_ratio = 0.3, sel_cols = TO_KEEP)
+train_set_2 <- load_csv_data("train_2.csv", sample_ratio = 0.5, sel_cols = TO_KEEP)
+train_set_3 <- load_csv_data("train_3.csv", sample_ratio = 0.5, sel_cols = TO_KEEP)
+train_set_4 <- load_csv_data("train_4.csv", sample_ratio = 0.5, sel_cols = TO_KEEP)
+train_set_5 <- load_csv_data("train_5.csv", sample_ratio = 0.5, sel_cols = TO_KEEP)
 #train_set <- rbind(train_set_1, train_set_2, train_set_3, train_set_4, train_set_5, fill = TRUE)
-train_set <- rbind(train_set_3, train_set_4, fill = TRUE)
+train_set <- rbind(train_set_2, train_set_3, train_set_4, train_set_5, fill = TRUE)
 
 train_set[, train_sample := TRUE]
 
@@ -234,7 +234,7 @@ eval_set[, train_sample := FALSE]
 
 ## Uno los datasets
 data_set <- rbind(train_set, eval_set, fill = TRUE)
-rm(train_set, eval_set, train_set_3, train_set_4)
+rm(train_set, eval_set, train_set_2, train_set_3, train_set_4, train_set_5)
 gc()
 
 ## Hago algo de ingenierÃ­a de atributos
@@ -263,6 +263,16 @@ data_set[, max_BuyCard_sum := pmax(BuyCard_sum_dsi1,
                                    BuyCard_sum_dsi3,
                                    na.rm = TRUE)]
 
+data_set[, min_LoseBattle_sum := pmin(LoseBattle_sum_dsi1,
+                                   LoseBattle_sum_dsi2,
+                                   LoseBattle_sum_dsi3,
+                                   na.rm = TRUE)]
+
+data_set[, max_LoseBattle_sum := pmax(LoseBattle_sum_dsi1,
+                                      LoseBattle_sum_dsi2,
+                                      LoseBattle_sum_dsi3,
+                                      na.rm = TRUE)]
+
 ## Hago one hot encoding
 data_set <- one_hot_sparse(data_set)
 gc()
@@ -289,7 +299,7 @@ dvalid <- xgb.DMatrix(data = train_set[val_index, colnames(train_set) != "Label"
                       label = train_set[val_index, colnames(train_set) == "Label"])
 
 rgrid <- random_grid(size = 10,
-                     min_nrounds = 20, max_nrounds = 50,
+                     min_nrounds = 20, max_nrounds = 150,
                      min_max_depth = 1, max_max_depth = 6,
                      min_eta = 0.0025, max_eta = 0.1,
                      min_gamma = 0, max_gamma = 1,
@@ -315,6 +325,6 @@ eval_preds <- data.frame(id = eval_set[, "id"],
 #print(eval_preds)
 # Armo el archivo para subir a Kaggle
 options(scipen = 999)  # Para evitar que se guarden valores en formato cientÃ­fico
-write.table(eval_preds, "xgbst_modelo_con_random_search_feature_engineering.csv",
+write.table(eval_preds, "xgbst_modelo_con_random_search_feature_engineering-v4.csv",
             sep = ",", row.names = FALSE, quote = FALSE)
 options(scipen=0, digits=7)  # Para volver al comportamiento tradicional
