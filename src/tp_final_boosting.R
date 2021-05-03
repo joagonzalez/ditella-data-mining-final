@@ -7,6 +7,7 @@ setwd('/home/jgonzalez/Downloads/data')
 library(Matrix)
 library(data.table)
 library(xgboost)
+library(dplyr)
 
 
 load_csv_data <- function(csv_file, sample_ratio = 1, drop_cols = NULL,
@@ -47,7 +48,7 @@ one_hot_sparse <- function(data_set) {
         }
     }
     
-    # Identificamos las columnas que son factor (OJO: el data.frame no deberÃ­a tener character)
+    # Identificamos las columnas que son factor (OJO: el data.frame no deberia tener character)
     fact_variables <- names(which(sapply(data_set, is.factor)))
     
     # Para cada columna factor hago one hot encoding
@@ -200,31 +201,36 @@ result_table <- function(pred_models) {
 }
 
 
-## Defino que variables voy a cargar
+## Defino que variables voy a cargar. Las variables fueron elegidas en base a varianza y NA rate y experiencias de corridas previas
 TO_KEEP <- c("platform", "age", "install_date", "id",
-             "TutorialStart", "Label_max_played_dsi",
+             "TutorialStart", "TutorialFinish", "Label_max_played_dsi",
              "StartSession_sum_dsi0", "StartSession_sum_dsi1",
              "StartSession_sum_dsi2", "StartSession_sum_dsi3",
              "categorical_1", "categorical_2", "categorical_3",
              "categorical_4", "categorical_5", "categorical_6",
-             "categorical_7", "device_model", "TutorialFinish",
-             "country", "BuyCard_sum_dsi1", "BuyCard_sum_dsi2",
-             "BuyCard_sum_dsi3", "LoseBattle_sum_dsi1", "WinBattle_sum_dsi3", 
-             "LoseBattle_sum_dsi2", "LoseBattle_sum_dsi3", "WinBattle_sum_dsi2", 
-             "EnterShop_sum_dsi3", "EnterShop_sum_dsi2", "EnterShop_sum_dsi1", 
-             "OpenChest_sum_dsi3", "UpgradeCard_sum_dsi3", "UpgradeCard_sum_dsi0",
-             "PiggyBankModifiedPoints_sum_dsi3", "PiggyBankModifiedPoints_sum_dsi0", 
-             "PiggyBankModifiedPoints_sum_dsi2", "hard_positive", "hard_negative",
+             "categorical_7", "device_model", "country", 
+             "BuyCard_sum_dsi0", "BuyCard_sum_dsi1", "BuyCard_sum_dsi2", "BuyCard_sum_dsi3",
+             "LoseBattle_sum_dsi1", "LoseBattle_sum_dsi2", "LoseBattle_sum_dsi3",
+             "WinBattle_sum_dsi1", "WinBattle_sum_dsi2", "WinBattle_sum_dsi3",
+             "WinTournamentBattle_sum_dsi1",
+             "StartTournamentBattle_sum_dsi1",
+             "StartBattle_sum_dsi0", "StartBattle_sum_dsi2", "StartBattle_sum_dsi3",
+             "EnterShop_sum_dsi1", "EnterShop_sum_dsi2", "EnterShop_sum_dsi3", 
+             "EnterDeck_sum_dsi0", "EnterDeck_sum_dsi1",
+             "OpenChest_sum_dsi3", "OpenChest_sum_dsi2", "OpenChest_sum_dsi1",
+             "UpgradeCard_sum_dsi0", 
+             "PiggyBankModifiedPoints_sum_dsi3", "PiggyBankModifiedPoints_sum_dsi2", "PiggyBankModifiedPoints_sum_dsi1","PiggyBankModifiedPoints_sum_dsi0", 
+             "hard_positive", "hard_negative",
              "soft_positive", "soft_negative")
 
 ## Cargo uno de los datasets de entrenamiento del tp
-train_set_1 <- load_csv_data("train_1.csv", sample_ratio = 0.5, sel_cols = TO_KEEP)
-train_set_2 <- load_csv_data("train_2.csv", sample_ratio = 0.5, sel_cols = TO_KEEP)
-train_set_3 <- load_csv_data("train_3.csv", sample_ratio = 0.6, sel_cols = TO_KEEP)
-train_set_4 <- load_csv_data("train_4.csv", sample_ratio = 0.6, sel_cols = TO_KEEP)
-train_set_5 <- load_csv_data("train_5.csv", sample_ratio = 0.6, sel_cols = TO_KEEP)
+# train_set_1 <- load_csv_data("train_1.csv", sample_ratio = 0.2, sel_cols = TO_KEEP)
+train_set_2 <- load_csv_data("train_2.csv", sample_ratio = 0.4, sel_cols = TO_KEEP)
+train_set_3 <- load_csv_data("train_3.csv", sample_ratio = 0.8, sel_cols = TO_KEEP)
+train_set_4 <- load_csv_data("train_4.csv", sample_ratio = 0.75, sel_cols = TO_KEEP)
+train_set_5 <- load_csv_data("train_5.csv", sample_ratio = 0.8, sel_cols = TO_KEEP)
 #train_set <- rbind(train_set_1, train_set_2, train_set_3, train_set_4, train_set_5, fill = TRUE)
-train_set <- rbind(train_set_1, train_set_2, train_set_3, train_set_4, train_set_5, fill = TRUE)
+train_set <- rbind(train_set_2, train_set_3, train_set_4, train_set_5, fill = TRUE)
 
 train_set[, train_sample := TRUE]
 
@@ -235,10 +241,28 @@ eval_set[, train_sample := FALSE]
 
 ## Uno los datasets
 data_set <- rbind(train_set, eval_set, fill = TRUE)
-rm(train_set, eval_set, train_set_1, train_set_2, train_set_3, train_set_4, train_set_5)
+rm(train_set, eval_set, train_set_2, train_set_3, train_set_4, train_set_5)
 gc()
 
-## Hago algo de ingenierÃ­a de atributos
+## Hago algo de ingenieria de atributos
+
+# quitamos filas en las cuales no se puede confiar Lable_max_played_dsi == 3 y install_date [383-395]
+num_rows <- nrow(data_set)
+data_set <- data_set[!(data_set$install_date == 383 & data_set$Label_max_played_dsi == 3), ]
+data_set <- data_set[!(data_set$install_date == 384 & data_set$Label_max_played_dsi == 3), ]
+data_set <- data_set[!(data_set$install_date == 385 & data_set$Label_max_played_dsi == 3), ]
+data_set <- data_set[!(data_set$install_date == 386 & data_set$Label_max_played_dsi == 3), ]
+data_set <- data_set[!(data_set$install_date == 387 & data_set$Label_max_played_dsi == 3), ]
+data_set <- data_set[!(data_set$install_date == 388 & data_set$Label_max_played_dsi == 3), ]
+data_set <- data_set[!(data_set$install_date == 389 & data_set$Label_max_played_dsi == 3), ]
+data_set <- data_set[!(data_set$install_date == 390 & data_set$Label_max_played_dsi == 3), ]
+data_set <- data_set[!(data_set$install_date == 391 & data_set$Label_max_played_dsi == 3), ]
+data_set <- data_set[!(data_set$install_date == 392 & data_set$Label_max_played_dsi == 3), ]
+data_set <- data_set[!(data_set$install_date == 393 & data_set$Label_max_played_dsi == 3), ]
+data_set <- data_set[!(data_set$install_date == 394 & data_set$Label_max_played_dsi == 3), ]
+data_set <- data_set[!(data_set$install_date == 395 & data_set$Label_max_played_dsi == 3), ]
+cat(sprintf("registros censurados: %d",  num_rows-nrow(data_set)))
+
 data_set[, Label := as.numeric(Label_max_played_dsi == 3)]
 data_set[, Label_max_played_dsi := NULL]
 
@@ -285,6 +309,44 @@ data_set[, min_EnterShop_sum := pmin(EnterShop_sum_dsi3,
                                      na.rm = TRUE)]
 
 
+data_set[, max_WinBattle_sum := pmax(WinBattle_sum_dsi3,
+                                     WinBattle_sum_dsi2,
+                                     WinBattle_sum_dsi1,
+                                     na.rm = TRUE)]
+
+data_set[, min_WinBattle_sum := pmin(WinBattle_sum_dsi3,
+                                     WinBattle_sum_dsi2,
+                                     WinBattle_sum_dsi1,
+                                     na.rm = TRUE)]
+
+
+data_set[, max_PiggyBankModifiedPoints_sum := pmax(PiggyBankModifiedPoints_sum_dsi3,
+                                     PiggyBankModifiedPoints_sum_dsi2,
+                                     PiggyBankModifiedPoints_sum_dsi1,
+                                     na.rm = TRUE)]
+
+data_set[, min_PiggyBankModifiedPoints_sum := pmin(PiggyBankModifiedPoints_sum_dsi3,
+                                     PiggyBankModifiedPoints_sum_dsi2,
+                                     PiggyBankModifiedPoints_sum_dsi1,
+                                     na.rm = TRUE)]
+
+data_set[, max_OpenChest_sum := pmax(OpenChest_sum_dsi3,
+                                     OpenChest_sum_dsi2,
+                                     OpenChest_sum_dsi1,
+                                     na.rm = TRUE)]
+
+data_set[, min_OpenChest_sum := pmin(OpenChest_sum_dsi3,
+                                     OpenChest_sum_dsi2,
+                                     OpenChest_sum_dsi1,
+                                     na.rm = TRUE)]
+
+# Analizamos varianza y NAs de variables
+variance <- data_set %>% summarise_if(is.numeric, var) # varianza
+means <- data_set %>% summarise_if(is.numeric, mean) # promedio
+nas <- colSums(is.na(data_set)) # NAs
+variance
+means
+
 ## Hago one hot encoding
 data_set <- one_hot_sparse(data_set)
 gc()
@@ -311,7 +373,7 @@ dvalid <- xgb.DMatrix(data = train_set[val_index, colnames(train_set) != "Label"
                       label = train_set[val_index, colnames(train_set) == "Label"])
 
 rgrid <- random_grid(size = 10,
-                     min_nrounds = 200, max_nrounds = 500,
+                     min_nrounds = 250, max_nrounds = 600,
                      min_max_depth = 1, max_max_depth = 6,
                      min_eta = 0.0025, max_eta = 0.1,
                      min_gamma = 0, max_gamma = 1,
@@ -337,6 +399,6 @@ eval_preds <- data.frame(id = eval_set[, "id"],
 #print(eval_preds)
 # Armo el archivo para subir a Kaggle
 options(scipen = 999)  # Para evitar que se guarden valores en formato cientÃ­fico
-write.table(eval_preds, "xgbst_modelo_con_random_search_feature_engineering-v7.csv",
+write.table(eval_preds, "xgbst_modelo_con_random_search_feature_engineering-vfinal-clean.csv",
             sep = ",", row.names = FALSE, quote = FALSE)
 options(scipen=0, digits=7)  # Para volver al comportamiento tradicional
