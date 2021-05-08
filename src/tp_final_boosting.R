@@ -2,13 +2,18 @@ rm(list=ls())
 setwd('/home/jgonzalez/Downloads/data')
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
-# 1er bloque
+# Libraries
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
 
 library(Matrix)
 library(data.table)
 library(xgboost)
 library(dplyr)
 
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+# Custom functions
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
 
 load_csv_data <- function(csv_file, sample_ratio = 1, drop_cols = NULL,
                           sel_cols = NULL) {
@@ -201,7 +206,13 @@ result_table <- function(pred_models) {
 }
 
 
-## Defino que variables voy a cargar. Las variables fueron elegidas en base a varianza y NA rate y experiencias de corridas previas
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+# Feature Engineering
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+
+
+# Las variables fueron elegidas en base a varianza y NA rate y experiencias de ejecuciones previas
+
 TO_KEEP <- c("platform", "age", "install_date", "id",
              "TutorialStart", "TutorialFinish", "Label_max_played_dsi",
              "StartSession_sum_dsi0", "StartSession_sum_dsi1",
@@ -340,16 +351,34 @@ data_set[, min_OpenChest_sum := pmin(OpenChest_sum_dsi3,
                                      OpenChest_sum_dsi1,
                                      na.rm = TRUE)]
 
+# Anàlisis de clases desbalanceadas 
+prop.table(table(data_set$Label))
+prop.table(table(data_set$platform))
+prop.table(table(data_set$install_date))
+prop.table(table(data_set$TutorialFinish))
+
+plot(table(data_set$Label), main = "Balance de columna Label", ylab = "Valores", xlab = "predictores")
+plot(table(data_set$platform))
+plot(table(data_set$install_date))
+plot(table(data_set$TutorialFinish))
+plot(table(data_set$PiggyBankModifiedPoints_sum_dsi3))
+plot(table(data_set$WinBattle_sum_dsi3))
+plot(table(data_set$StartSession_sum_dsi3))
+
+
 # Analizamos varianza y NAs de variables
 variance <- data_set %>% summarise_if(is.numeric, var) # varianza
 means <- data_set %>% summarise_if(is.numeric, mean) # promedio
 nas <- colSums(is.na(data_set)) # NAs
 variance
 means
+plot(nas)
+
 
 ## Hago one hot encoding
 data_set <- one_hot_sparse(data_set)
 gc()
+
 
 ## Separo en conjunto de training y evaluaciÃ³n de nuevo
 train_set <- data_set[as.logical(data_set[,"train_sample"]),]
@@ -359,7 +388,11 @@ eval_set <- eval_set[, setdiff(colnames(eval_set), "train_sample")]
 rm(data_set)
 gc()
 
-# Entreno xgboost
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+# Model Training
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+
 val_index <- c(1:10000)
 
 train_index <- setdiff(c(1:nrow(train_set)), val_index)
@@ -381,6 +414,11 @@ rgrid <- random_grid(size = 10,
                      min_min_child_weight = 1, max_min_child_weight = 10,
                      min_subsample = 0.75, max_subsample = 1)
 
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+# Prediction Model
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+
 predicted_models <- train_xgboost(dtrain, dvalid, rgrid)
 gc()
 
@@ -397,7 +435,12 @@ eval_preds <- data.frame(id = eval_set[, "id"],
                                          newdata = eval_set[, setdiff(colnames(eval_set), c("Label"))]))
 
 #print(eval_preds)
-# Armo el archivo para subir a Kaggle
+
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+# Results
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+
 options(scipen = 999)  # Para evitar que se guarden valores en formato cientÃ­fico
 write.table(eval_preds, "xgbst_modelo_con_random_search_feature_engineering-vfinal-clean.csv",
             sep = ",", row.names = FALSE, quote = FALSE)
