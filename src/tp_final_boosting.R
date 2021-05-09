@@ -1,18 +1,32 @@
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+# Trabajo practico Mineria de Datos - Universidad Torcuato Di Tella - MiM + Analytics
+# Alumnos: Joaquin Gonzalez, Martin Di Lello, Franco Piccardo
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+
 rm(list=ls())
 setwd('/home/jgonzalez/Downloads/data')
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
-# Libraries
+# Librerias
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
 
 library(Matrix)
 library(data.table)
 library(xgboost)
 library(dplyr)
+library(ggplot2)
 library(RColorBrewer)
 
+#set parallel backend
+#install.packages("parallelMap")
+library(parallel)
+library(parallelMap) 
+detectCores()
+# ayuda para las tareas previas a boosting, ya que al depender de arboles previos no se puede paralelizar
+parallelStartSocket(cpus = 6)
+
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
-# Custom functions
+# Funciones Custom
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
 
 load_csv_data <- function(csv_file, sample_ratio = 1, drop_cols = NULL,
@@ -205,15 +219,13 @@ result_table <- function(pred_models) {
     return(res_table)
 }
 
-
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
-# Feature Engineering
+# Carga de datos
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
 
+# Las variables fueron elegidas en base a varianza, NA rate, correlacion y experiencias de ejecuciones previas
 
-# Las variables fueron elegidas en base a varianza y NA rate y experiencias de ejecuciones previas
-
-TO_KEEP <- c("platform", "age", "install_date", "id",
+TO_KEEP <- c("platform", "install_date", "id", "age",
              "TutorialStart", "TutorialFinish", "Label_max_played_dsi",
              "StartSession_sum_dsi0", "StartSession_sum_dsi1",
              "StartSession_sum_dsi2", "StartSession_sum_dsi3",
@@ -235,7 +247,7 @@ TO_KEEP <- c("platform", "age", "install_date", "id",
              "soft_positive", "soft_negative")
 
 ## Cargo datasets
-SAMPLE_RATIO <- 0.7
+SAMPLE_RATIO <- 0.75
 sequence <- c(1:5)
 for (val in sequence){
     assign(paste0("train_set_", val), load_csv_data(paste("train_", val, ".csv", sep=""), sample_ratio = SAMPLE_RATIO, sel_cols = TO_KEEP))
@@ -255,7 +267,7 @@ data_set <- rbind(train_set, eval_set, fill = TRUE)
 rm(train_set, eval_set, train_set_1, train_set_2, train_set_3, train_set_4, train_set_5)
 gc()
 
-## Hago algo de ingenieria de atributos
+## Limpieza de dataset
 
 # quitamos filas en las cuales no se puede confiar Lable_max_played_dsi == 3 y install_date [383-395]
 # para evitar data leakage
@@ -278,6 +290,95 @@ cat(sprintf("registros censurados: %d",  num_rows-nrow(data_set)))
 # generamos variable churn
 data_set[, Label := as.numeric(Label_max_played_dsi == 3)]
 data_set[, Label_max_played_dsi := NULL]
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+# Analisis exploratorio de datos
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+
+## Analisis de correlacion entre variables predictoras y target
+for (val in sequence){
+    assign(paste0("train_set_plot", val), load_csv_data(paste("train_", val, ".csv", sep=""), sample_ratio = SAMPLE_RATIO, sel_cols = TO_KEEP))
+}
+
+df <- rbindlist(list(train_set_plot1, train_set_plot2, train_set_plot3, train_set_plot4, train_set_plot5), fill=TRUE)
+rm(train_set_plot1, train_set_plot2, train_set_plot3, train_set_plot4, train_set_plot5)
+gc()
+
+df[, Label := factor(ifelse(Label_max_played_dsi == 3, "Churn", "No churn"), levels=c("No churn", "Churn"))]
+df[, BuyCard_sum_dsi3 := factor(ifelse(BuyCard_sum_dsi3 > 0, "Buy", "No Buy"), levels=c("No Buy", "Buy"))]
+
+data_for_plot <- df %>% 
+    filter(install_date < 378) %>%
+    group_by(WinBattle_sum_dsi3, BuyCard_sum_dsi3) %>%
+    summarise(churn_rate = mean(Label=="Churn"))
+
+g1 <- ggplot(data_for_plot, aes(x=WinBattle_sum_dsi3, y=churn_rate, color = BuyCard_sum_dsi3)) +
+    geom_line(alpha=0.5) +
+    geom_smooth(se=FALSE) +
+    ggtitle("Churn rate vs WinBattles") + 
+    ylab("Churn rate") +
+    xlab("WinBattle_sum_dsi3") +
+    xlim(0, 10) +
+    ylim(0, 0.35) +
+    theme_bw()
+ggsave("/home/jgonzalez/Downloads/data/WinBattle_sum_dsi3.jpg", g1, height = 6, width = 12)
+
+
+data_for_plot <- df %>% 
+    filter(install_date < 378) %>%
+    group_by(PiggyBankModifiedPoints_sum_dsi3, BuyCard_sum_dsi3) %>%
+    summarise(churn_rate = mean(Label=="Churn"))
+g2 <- ggplot(data_for_plot, aes(x=PiggyBankModifiedPoints_sum_dsi3, y=churn_rate, color = BuyCard_sum_dsi3)) +
+    geom_line(alpha=0.5) +
+    geom_smooth(se=FALSE) +
+    ggtitle("Churn rate vs PiggyBankModifiedPoints_sum_dsi3") + 
+    ylab("Churn rate") +
+    xlab("PiggyBankModifiedPoints_sum_dsi3") +
+    xlim(0, 20) +
+    ylim(0, 0.35) +
+    theme_bw()
+ggsave("/home/jgonzalez/Downloads/data/PiggyBankModifiedPoints_sum_dsi3.jpg", g2, height = 6, width = 12)
+rm(df, data_for_plot)
+gc()
+
+# result <- cor(data_set[,-"Label"], data_set$Label)
+# plot(result, main = "Correlacion variables predictoras y target", ylab = "correlacion", xlab = "predictores")
+
+# Anàlisis de clases desbalanceadas 
+prop.table(table(data_set$Label))
+prop.table(table(data_set$platform))
+prop.table(table(data_set$install_date))
+prop.table(table(data_set$TutorialFinish))
+prop.table(table(data_set$PiggyBankModifiedPoints_sum_dsi3))
+prop.table(table(data_set$StartTournamentBattle_sum_dsi1))
+
+color <- brewer.pal(length(count), "Set2") 
+pie(table(data_set$Label), main= "Balance Label" ,labels = c("Churn", "No Churn"), col = color, cex = 1)
+pie(table(data_set$platform), main= "Balance Platform" ,labels = c("Android", "iOS"), col = color, cex = 1)
+plot(table(data_set$install_date), main = "Balance install_date", ylab = "Frecuencia", xlab = "install_date", col = rep(1:3, each = 10))
+
+pie(table(data_set$TutorialFinish), main= "Balance TutorialFinish" , col = color, cex = 1, labels = c("No Finish","Finish"))
+plot(table(data_set$PiggyBankModifiedPoints_sum_dsi3), main = "Balance PiggyBankModifiedPoints_sum_dsi3", ylab = "Frecuencia", xlab = "PiggyBankModifiedPoints_sum_dsi3", col = rep(1:3, each = 5), xlim = c(1,180))
+plot(table(data_set$WinBattle_sum_dsi3), main = "Balance WinBattle_sum_dsi3", ylab = "Frecuencia", xlab = "WinBattle_sum_dsi3", col = rep(1:3, each = 5), xlim = c(1,180))
+plot(table(data_set$StartSession_sum_dsi3), main = "Balance StartSession_sum_dsi3", ylab = "Frecuencia", xlab = "StartSession_sum_dsi3", col = rep(1:3, each = 5), xlim = c(1,180))
+plot(table(data_set$StartTournamentBattle_sum_dsi1), main = "Balance StartTournamentBattle_sum_dsi1", ylab = "Frecuencia", xlab = "StartTournamentBattle_sum_dsi1", col = rep(1:3, each = 5), xlim = c(1,85))
+plot(table(data_set$WinTournamentBattle_sum_dsi1), main = "Balance WinTournamentBattle_sum_dsi1", ylab = "Frecuencia", xlab = "WinTournamentBattle_sum_dsi1", col = rep(1:3, each = 5), xlim = c(1,80))
+
+# Analizamos varianza y NAs de variables
+variance <- data_set %>% summarise_if(is.numeric, var) # varianza
+means <- data_set %>% summarise_if(is.numeric, mean) # promedio
+
+nas <- colSums(is.na(data_set)) # NAs
+variance
+means
+nas
+na.omit(nas[!nas < 100])
+pie_labels <- paste0(c("age","Label","categorical_7","country","OpenChest_sum_dsi2"), " = ", round(100 * na.omit(nas[!nas < 100])/sum(na.omit(nas[!nas < 100])), 2), "%")
+pie(na.omit(nas[!nas < 100]), main = "Missing values", col = color, cex = 1, labels = pie_labels)
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
+# Feature Engineering
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
 
 # variable creditor para analizar si hay correlacion entre usuarios deudores y churn
 data_set[, creditor := ((soft_positive + hard_positive) - (soft_negative + hard_negative)) > 0]
@@ -359,39 +460,6 @@ data_set[, min_OpenChest_sum := pmin(OpenChest_sum_dsi3,
                                      OpenChest_sum_dsi1,
                                      na.rm = TRUE)]
 
-# Anàlisis de clases desbalanceadas 
-prop.table(table(data_set$Label))
-prop.table(table(data_set$platform))
-prop.table(table(data_set$install_date))
-prop.table(table(data_set$TutorialFinish))
-prop.table(table(data_set$PiggyBankModifiedPoints_sum_dsi3))
-prop.table(table(data_set$StartTournamentBattle_sum_dsi1))
-
-
-color <- brewer.pal(length(count), "Set2") 
-pie(table(data_set$Label), main= "Balance Label" ,labels = c("Churn", "No Churn"), col = color, cex = 1)
-pie(table(data_set$platform), main= "Balance Platform" ,labels = c("Android", "iOS"), col = color, cex = 1)
-plot(table(data_set$install_date), main = "Balance install_date", ylab = "Frecuencia", xlab = "install_date", col = rep(1:3, each = 10))
-
-pie(table(data_set$TutorialFinish), main= "Balance TutorialFinish" ,labels = c("Finish", "No Finish"), col = color, cex = 1)
-plot(table(data_set$PiggyBankModifiedPoints_sum_dsi3), main = "Balance PiggyBankModifiedPoints_sum_dsi3", ylab = "Frecuencia", xlab = "PiggyBankModifiedPoints_sum_dsi3", col = rep(1:3, each = 5), xlim = c(1,180))
-plot(table(data_set$WinBattle_sum_dsi3), main = "Balance WinBattle_sum_dsi3", ylab = "Frecuencia", xlab = "WinBattle_sum_dsi3", col = rep(1:3, each = 5), xlim = c(1,180))
-plot(table(data_set$StartSession_sum_dsi3), main = "Balance StartSession_sum_dsi3", ylab = "Frecuencia", xlab = "StartSession_sum_dsi3", col = rep(1:3, each = 5), xlim = c(1,180))
-plot(table(data_set$StartTournamentBattle_sum_dsi1), main = "Balance StartTournamentBattle_sum_dsi1", ylab = "Frecuencia", xlab = "StartTournamentBattle_sum_dsi1", col = rep(1:3, each = 5), xlim = c(1,85))
-plot(table(data_set$WinTournamentBattle_sum_dsi1), main = "Balance StartTournamentBattle_sum_dsi1", ylab = "Frecuencia", xlab = "StartTournamentBattle_sum_dsi1", col = rep(1:3, each = 5), xlim = c(1,80))
-
-
-# Analizamos varianza y NAs de variables
-variance <- data_set %>% summarise_if(is.numeric, var) # varianza
-means <- data_set %>% summarise_if(is.numeric, mean) # promedio
-
-nas <- colSums(is.na(data_set)) # NAs
-variance
-means
-pie(nas)
-nas
-pie(na.omit(nas[!nas < 100]), main = "Missing values", col = color, cex = 1)
-
 
 ## Hago one hot encoding
 data_set <- one_hot_sparse(data_set)
@@ -411,13 +479,13 @@ gc()
 # Model Training
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
 
-# separo 10k valores para validacion del training set. Por esto es que las predicciones dan mejor aca
+# separo 80k valores para validacion del training set. Por esto es que las predicciones dan mejor aca
 # que en kaggle. La data de validacion no fueron datos con lo que entrene a los modelos entonces puede haber
 # informacion que no estaba en training set sin importar que haya cross validation
 
 # validacion de modelos
 
-val_index <- c(1:800000)
+val_index <- c(1:800000) # 20% aprox de los datos
 
 train_index <- setdiff(c(1:nrow(train_set)), val_index)
 
@@ -429,17 +497,17 @@ dtrain <- xgb.DMatrix(data = train_set[train_index,
 dvalid <- xgb.DMatrix(data = train_set[val_index, colnames(train_set) != "Label"],
                       label = train_set[val_index, colnames(train_set) == "Label"])
 
-# sobre esto hay que optimizar seleccion de hyperparametros
-rgrid <- random_grid(size = 10,
-                     # min_nrounds = 250, max_nrounds = 600,
-                     min_nrounds = 1, max_nrounds = 25,
-                     min_max_depth = 1, max_max_depth = 6,
-                     min_eta = 0.0025, max_eta = 0.1,
+# usamos random search para optimizacion de hiperparametros, buscamos los mejores iterando aleatoriamente 
+# con distintos valores. Para explorar suficientemente el espacio de hiperparametros entrenamos 50 modelos
+rgrid <- random_grid(size = 50,
+                     #min_nrounds = 300, max_nrounds = 600,
+                     min_nrounds = 80, max_nrounds = 200,
+                     min_max_depth = 3, max_max_depth = 25,
+                     min_eta = 0.0020, max_eta = 0.1,
                      min_gamma = 0, max_gamma = 1,
-                     min_colsample_bytree = 0.6, max_colsample_bytree = 1,
+                     min_colsample_bytree = 0.6, max_colsample_bytree = 0.8,
                      min_min_child_weight = 1, max_min_child_weight = 10,
-                     min_subsample = 0.75, max_subsample = 1)
-
+                     min_subsample = 0.5, max_subsample = 0.8)
 
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
 # Prediction Model
@@ -447,15 +515,18 @@ rgrid <- random_grid(size = 10,
 
 predicted_models <- train_xgboost(dtrain, dvalid, rgrid)
 gc()
-
+# imprimimos la performance de todos los modelos entrenados con sus respectivos hiperparamentros ordernados
 res_table <- result_table(predicted_models)
 print(res_table)
 
-## Analyze variable importance
+## Analizamos importancia de variables predictoras del modelo con mejor performance en validation set
 var_imp <- as.data.frame(xgb.importance(model = predicted_models[[res_table[1, "i"]]]$model))
 print(head(var_imp, 20))
+# Ploteamos variable importance
+mat <- xgb.importance (feature_names = colnames(dtrain),model = predicted_models[[res_table[1, "i"]]]$model)
+xgb.plot.importance (importance_matrix = mat[1:20]) 
 
-# Predicts in evaluation
+# Realizamos predicciones en evaluation set con el modelo que tuvo mejor performance en validation set
 eval_preds <- data.frame(id = eval_set[, "id"],
                          Label = predict(predicted_models[[res_table[1, "i"]]]$model,
                                          newdata = eval_set[, setdiff(colnames(eval_set), c("Label"))]))
@@ -467,7 +538,8 @@ eval_preds <- data.frame(id = eval_set[, "id"],
 # Results
 #~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#
 
-options(scipen = 999)  # Para evitar que se guarden valores en formato cientÃ­fico
-write.table(eval_preds, "xgbst_modelo_con_random_search_feature_engineering-vfinal.csv",
+# Exportamos predicciones
+options(scipen = 999)  # Para evitar que se guarden valores en formato cientifico
+write.table(eval_preds, "xgbst_modelo_con_random_search_feature_engineering.csv",
             sep = ",", row.names = FALSE, quote = FALSE)
 options(scipen=0, digits=7)  # Para volver al comportamiento tradicional
